@@ -56,11 +56,12 @@ live:
 `NOTION_API_TOKEN` must be set in `.env` for local runs, and pushed to the
 deployed worker separately (see below).
 
-Slack notifications need `SLACK_API_KEY` (a Slack bot token with
-`chat:write`) set the same way — in `.env` for local runs, then pushed to
-the deployed worker with `ntn workers env push`. Tasks without a
-`Channel ID` are skipped (with a warning in the run logs) rather than
-failing the run.
+Slack notifications need `SLACK_API_KEY` (a Slack bot token with the
+`chat:write` scope — add `chat:write.public` too if the bot should post to
+public channels it hasn't been invited to) set the same way — in `.env`
+for local runs, then pushed to the deployed worker with
+`ntn workers env push`. Tasks without a `Channel ID` are skipped (with a
+warning in the run logs) rather than failing the run.
 
 ## Commands
 
@@ -86,6 +87,10 @@ classic `src/index.ts` entry point and doesn't discover alpha
 fail with "Could not find src/index.ts". Use `./test.sh --remote` against a
 deployed worker instead (set `DRY_RUN=1` via `ntn workers env push` first for
 a safe remote dry run).
+
+Verified end-to-end against the deployed worker: `./test.sh --remote` logs
+an overdue task, and the corresponding Slack channel receives the grouped
+notification with a working link back to the Notion task.
 
 ## Debugging
 
