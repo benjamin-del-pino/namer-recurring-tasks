@@ -154,8 +154,10 @@ Start with the first error and the last completed step. Check whether a failed s
 
 This worker ports the classic-API `namer-recurring-tasks` project to the alpha file-based workflow API.
 
-- `logOverdueTasks` (`src/workflows/logOverdueTasks.ts`) is the only capability. It runs on `triggers.scheduled()` (recurrence), scans the recurring-tasks database for overdue tasks, and appends one row per task to the overdue log. Safe to re-run: rows already logged for the run date are skipped.
+- `logOverdueTasks` (`src/workflows/logOverdueTasks.ts`) is the only capability. It runs on `triggers.scheduled()` (recurrence), scans the recurring-tasks database for overdue tasks, appends one row per task to the overdue log, and posts a Slack message per `Channel ID` grouping the tasks newly logged that run. Safe to re-run: rows already logged for the run date are skipped, and since Slack notification only covers newly-logged tasks, a re-run doesn't re-notify Slack either.
+- `src/slackNotify.ts` groups overdue tasks by their source `Channel ID` property, builds the message, and posts it via Slack's `chat.postMessage`. Tasks with no `Channel ID` are skipped with a `console.warn`, not a run failure.
 - `NOTION_API_TOKEN` is set in the local `.env` (added 2026-08-27). It still needs `ntn workers env push` after the first deploy so the deployed worker has it too.
+- `SLACK_API_KEY` (a Slack bot token with `chat:write`) is needed in `.env` for local runs and must be pushed with `ntn workers env push` after deploy, same as `NOTION_API_TOKEN`. Missing it throws a `TerminalError` from `postToChannel` so the run fails clearly instead of being retried automatically.
 - `src/overdueLog.ts` currently points at the **sandbox test replica** data sources (`SOURCE_DATA_SOURCE_ID`, `LOG_DATA_SOURCE_ID`). Swap to the production IDs noted in that file's comments before going live.
 - Deployment (`ntn workers deploy`, `ntn workers env push`) is handled by the user directly — do not run it from here unless explicitly asked.
 - Known CLI limitation: `ntn workers exec --local` (ntn 0.22.10) looks for a classic `src/index.ts` entry point and does not discover alpha `src/workflows/` files, so `test.sh`'s local modes fail with "Could not find src/index.ts". Use `test.sh --remote` against a deployed worker instead until Notion updates that command.

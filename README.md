@@ -2,8 +2,9 @@
 
 A Notion Worker with one workflow: **`logOverdueTasks`**. It runs on a daily
 schedule, scans `🔁 NAMER | Active Recurring Tasks` for tasks whose Due Date
-has passed, and appends one row per overdue task to
-`⚠️ Namer Paid Search Overdue Log`.
+has passed, appends one row per overdue task to
+`⚠️ Namer Paid Search Overdue Log`, and posts a Slack message per channel
+listing that channel's newly-overdue tasks.
 
 This is the alpha file-based port of the classic-API `namer-recurring-tasks`
 project.
@@ -18,6 +19,12 @@ project.
 4. For each overdue task not already logged today, creates a log row with
    the task name, client, cadence, owner(s), and a notes field summarizing
    how overdue it is.
+5. Groups the tasks that were newly logged this run by their source
+   `Channel ID` property and posts one Slack message per channel, listing
+   that channel's tasks with links back to their Notion pages. Because
+   this only covers newly-logged tasks, a same-day re-run doesn't
+   re-notify Slack — it reuses the log's own dedupe instead of tracking
+   separate state.
 
 Deduplication key is task title + client (`src/overdueLog.ts`'s
 `dedupeKey`), since the log has no back-relation to the source task.
@@ -25,9 +32,11 @@ Deduplication key is task title + client (`src/overdueLog.ts`'s
 ## Project layout
 
 - `src/workflows/logOverdueTasks.ts` — the workflow: trigger, orchestration,
-  logging.
+  logging, Slack notification.
 - `src/overdueLog.ts` — Notion query/paging, retry-with-backoff, page-to-task
   mapping, and log-row property building.
+- `src/slackNotify.ts` — groups overdue tasks by `Channel ID`, builds the
+  Slack message, and posts it via `chat.postMessage`.
 - `test.sh` — drives the workflow with a synthetic recurrence event.
 
 ## Configuration
@@ -46,6 +55,12 @@ live:
 
 `NOTION_API_TOKEN` must be set in `.env` for local runs, and pushed to the
 deployed worker separately (see below).
+
+Slack notifications need `SLACK_API_KEY` (a Slack bot token with
+`chat:write`) set the same way — in `.env` for local runs, then pushed to
+the deployed worker with `ntn workers env push`. Tasks without a
+`Channel ID` are skipped (with a warning in the run logs) rather than
+failing the run.
 
 ## Commands
 

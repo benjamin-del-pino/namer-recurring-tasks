@@ -14,6 +14,7 @@ import {
 	toOverdueTask,
 	WRITE_GAP_MS,
 } from "../overdueLog.js";
+import { buildMessage, groupByChannel, postToChannel } from "../slackNotify.js";
 
 // Fires on a recurring schedule. Frequency, time of day and timezone are set
 // per-workflow in the Notion UI (app.notion.com/developers/workers) after
@@ -60,6 +61,7 @@ export default createWorkflow({
 
 		let created = 0;
 		let skipped = 0;
+		const notifiable: OverdueTask[] = [];
 
 		for (const task of tasks) {
 			const key = dedupeKey(task.taskName, task.clientId);
@@ -73,6 +75,7 @@ export default createWorkflow({
 			if (dryRun) {
 				console.log(`[DRY RUN] would create log row for "${task.taskName}" (${task.url})`);
 				created++;
+				notifiable.push(task);
 				continue;
 			}
 
@@ -80,6 +83,7 @@ export default createWorkflow({
 				createLogRow(context.notion, task, today),
 			);
 			created++;
+			notifiable.push(task);
 			await sleep(WRITE_GAP_MS);
 		}
 
@@ -87,5 +91,16 @@ export default createWorkflow({
 			`Done for ${today}: ${tasks.length} overdue, ${created} created,`
 				+ ` ${skipped} skipped as already logged.`,
 		);
+
+		const channelGroups = groupByChannel(notifiable);
+		for (const [channelId, channelTasks] of channelGroups) {
+			const message = buildMessage(channelTasks);
+			if (dryRun) {
+				console.log(`[DRY RUN] would notify Slack channel ${channelId}:\n${message}`);
+				continue;
+			}
+
+			await context.step(`Notify Slack channel ${channelId}`, () => postToChannel(channelId, message));
+		}
 	},
 });

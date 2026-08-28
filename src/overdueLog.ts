@@ -50,6 +50,7 @@ export type OverdueTask = {
 	dueDate: string;
 	notes: string;
 	ownerIds: string[];
+	channelId: string | null;
 };
 
 /**
@@ -188,6 +189,7 @@ export function toOverdueTask(page: NotionPage): OverdueTask | null {
 		ownerIds: (page.properties["Owner"]?.people ?? [])
 			.map((person: { id?: string }) => person.id)
 			.filter((id: string | undefined): id is string => Boolean(id)),
+		channelId: plainText(page.properties["Channel ID"]) || null,
 	};
 }
 
