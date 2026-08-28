@@ -1,0 +1,7 @@
+.env
+.env.*
+node_modules/
+.notion/
+dist/
+
+package-lock.json
