@@ -96,7 +96,10 @@ export default createWorkflow({
 		for (const [channelId, channelTasks] of channelGroups) {
 			const message = buildMessage(channelTasks);
 			if (dryRun) {
-				console.log(`[DRY RUN] would notify Slack channel ${channelId}:\n${message}`);
+				console.log(
+					`[DRY RUN] would notify Slack channel ${channelId}:\n${message.text}\n`
+						+ `Blocks: ${JSON.stringify({ blocks: message.blocks })}`,
+				);
 				continue;
 			}
 

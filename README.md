@@ -21,10 +21,27 @@ project.
    how overdue it is.
 5. Groups the tasks that were newly logged this run by their source
    `Channel ID` property and posts one Slack message per channel, listing
-   that channel's tasks with links back to their Notion pages. Because
-   this only covers newly-logged tasks, a same-day re-run doesn't
-   re-notify Slack — it reuses the log's own dedupe instead of tracking
-   separate state.
+   that channel's tasks with links back to their Notion pages. Each task
+   row has a **Complete** button (see below). Because this only covers
+   newly-logged tasks, a same-day re-run doesn't re-notify Slack — it
+   reuses the log's own dedupe instead of tracking separate state.
+
+### Complete button contract
+
+Each task is its own Block Kit section, mirroring the n8n flow
+`pjGoufIAZrpougvp`:
+
+- `block_id`: `task_<Notion page ID>`
+- button `action_id`: `complete_task_recurring_worker` (`COMPLETE_ACTION_ID`
+  in `src/slackNotify.ts`); don't rename it, the click listener routes on it
+- button `value`: the Notion page ID
+
+A message holds at most 45 task rows. Any extra tasks are summarised in a
+context line.
+
+The Slack app is shared with n8n, whose handler `KrS619xP0JKX3K7F` owns the
+app's single Interactivity URL. It ignores this action_id, so clicks
+currently do nothing. A separate listener worker will handle them.
 
 Deduplication key is task title + client (`src/overdueLog.ts`'s
 `dedupeKey`), since the log has no back-relation to the source task.
