@@ -33,7 +33,7 @@ export const COMPLETE_ACTION_ID = "complete_task_recurring_worker";
 /** Slack caps a message at 50 blocks; this leaves room for the header and overflow line. */
 const MAX_TASK_BLOCKS = 45;
 
-const HEADER = "Hey there, these tasks are overdue from yesterday:";
+const HEADER = "Hey there, these tasks are overdue:";
 
 // Block Kit types are hand-rolled; only the shapes this module emits are modelled.
 type TextObject = { type: "mrkdwn" | "plain_text"; text: string; emoji?: boolean };

@@ -1,6 +1,7 @@
 # namer-recurring-tasks
 
-A Notion Worker with one workflow: **`logOverdueTasks`**. It runs on a daily
+A Notion Worker with one workflow, **`logOverdueTasks`**, plus an on-demand
+tool that runs the same logic (see Testing). The workflow runs on a daily
 schedule, scans `🔁 NAMER | Active Recurring Tasks` for tasks whose Due Date
 has passed, appends one row per overdue task to
 `⚠️ Namer Paid Search Overdue Log`, and posts a Slack message per channel
@@ -54,7 +55,10 @@ Deduplication key is task title + client (`src/overdueLog.ts`'s
   mapping, and log-row property building.
 - `src/slackNotify.ts` — groups overdue tasks by `Channel ID`, builds the
   Slack message, and posts it via `chat.postMessage`.
-- `test.sh` — drives the workflow with a synthetic recurrence event.
+- `src/runOverdueLog.ts` — the shared run logic, used by the workflow and
+  the tool.
+- `src/tools/runLogOverdueTasks.ts` — on-demand tool (`{"dryRun": boolean}`).
+- `test.sh` — runs the tool against the deployed worker.
 
 ## Configuration
 
@@ -93,21 +97,20 @@ ntn workers env push  # push .env values to the deployed worker
 ## Testing
 
 ```shell
-./test.sh           # dry run — reads Notion, writes nothing
-./test.sh --write    # local run — creates log rows
-./test.sh --remote   # run against the deployed worker
+./test.sh          # dry run against the deployed worker — writes nothing
+./test.sh --write  # real run — creates log rows and posts to Slack
 ```
 
-**Known limitation:** `ntn workers exec --local` (ntn 0.22.10) looks for a
-classic `src/index.ts` entry point and doesn't discover alpha
-`src/workflows/` files, so `--write` and the default dry-run mode currently
-fail with "Could not find src/index.ts". Use `./test.sh --remote` against a
-deployed worker instead (set `DRY_RUN=1` via `ntn workers env push` first for
-a safe remote dry run).
+Both modes run the `runLogOverdueTasks` tool (`src/tools/`). It shares
+`src/runOverdueLog.ts` with the workflow and returns a summary
+(`overdue`, `created`, `skipped`, `notifiedChannels`). A tool is needed
+because `ntn workers exec` (ntn 0.23.13) refuses schedule-only workflows
+("does not declare workflow.manual"), and `exec --local` still needs a
+classic `src/index.ts`.
 
-Verified end-to-end against the deployed worker: `./test.sh --remote` logs
-an overdue task, and the corresponding Slack channel receives the grouped
-notification with a working link back to the Notion task.
+Verified 2026-09-30: `./test.sh --write` logged the sandbox's overdue task
+and posted a message to #tests with a Complete button and a working link
+back to the Notion task.
 
 ## Debugging
 
