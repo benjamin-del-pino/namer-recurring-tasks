@@ -15,6 +15,13 @@ type PageProperties = CreatePageParameters["properties"];
 export const SOURCE_DATA_SOURCE_ID = "d370848d-c842-40ed-965b-6a57654a3fe3";
 
 /**
+ * Link to the source database, used in Slack's "check Notion" line. Swap for
+ * `https://app.notion.com/p/0da05ce337578386931301e9d2c4db4d` (the real
+ * `🔁 NAMER | Active Recurring Tasks`) along with `SOURCE_DATA_SOURCE_ID`.
+ */
+export const SOURCE_DATABASE_URL = "https://app.notion.com/p/d042b3500c8a4d8e8724cde42c6ce2e1";
+
+/**
  * `⚠️ Workers Test - Namer Paid Search Overdue Log` — sandbox replica of the
  * log we append to. Swap for `e6805ce3-3757-82b5-b766-8713fcb4c60d` (the real
  * `⚠️ Namer Paid Search Overdue Log`) before going live.

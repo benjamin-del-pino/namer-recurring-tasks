@@ -1,7 +1,9 @@
 # namer-recurring-tasks
 
-A Notion Worker with one workflow, **`logOverdueTasks`**, plus an on-demand
-tool that runs the same logic (see Testing). The workflow runs on a daily
+A Notion Worker with two scheduled workflows, each with an on-demand tool
+that runs the same logic (see Testing). **`logOverdueTasks`** (08:00) is
+described below; **`sendTaskReminders`** (15:00) is described under
+Afternoon reminder. The workflow runs on a daily
 schedule, scans `🔁 NAMER | Active Recurring Tasks` for tasks whose Due Date
 has passed, appends one row per overdue task to
 `⚠️ Namer Paid Search Overdue Log`, and posts a Slack message per channel
@@ -47,6 +49,22 @@ currently do nothing. A separate listener worker will handle them.
 Deduplication key is task title + client (`src/overdueLog.ts`'s
 `dedupeKey`), since the log has no back-relation to the source task.
 
+## Afternoon reminder
+
+`sendTaskReminders` runs daily at 15:00 America/Argentina/Buenos_Aires (set
+in the Workers UI) and posts one message per `Channel ID`:
+
+1. Every task due today whose Status isn't `Complete`, each with a Complete
+   button (capped at 40, with an overflow line), or "Nothing due today."
+2. If the channel has overdue tasks (Status not `Complete`): the 3 oldest,
+   with Complete buttons, then "There are X other overdue tasks, check
+   Notion" linking to the database (`SOURCE_DATABASE_URL`).
+
+A channel with nothing due and nothing overdue gets no message. It only
+reads Notion and writes nothing to the overdue log. There is no dedupe:
+a workflow retry replays its steps and won't double-post, but a manual
+`./test.sh reminders --write` posts again.
+
 ## Project layout
 
 - `src/workflows/logOverdueTasks.ts` — the workflow: trigger, orchestration,
@@ -58,6 +76,9 @@ Deduplication key is task title + client (`src/overdueLog.ts`'s
 - `src/runOverdueLog.ts` — the shared run logic, used by the workflow and
   the tool.
 - `src/tools/runLogOverdueTasks.ts` — on-demand tool (`{"dryRun": boolean}`).
+- `src/workflows/sendTaskReminders.ts`, `src/runReminders.ts`,
+  `src/tools/runSendReminders.ts` — the afternoon reminder: workflow, shared
+  logic, on-demand tool.
 - `test.sh` — runs the tool against the deployed worker.
 
 ## Configuration
@@ -68,10 +89,12 @@ sources:
 - `SOURCE_DATA_SOURCE_ID` → `🔁 Workers Test - NAMER | Active Recurring Tasks`
 - `LOG_DATA_SOURCE_ID` → `⚠️ Workers Test - Namer Paid Search Overdue Log`
 
-Swap both for the production IDs noted in that file's comments before going
-live:
+Swap both, plus `SOURCE_DATABASE_URL` (the reminder's "check Notion"
+link), for the production values noted in that file's comments before
+going live:
 
-- Source → `🔁 NAMER | Active Recurring Tasks` (`26e05ce3-3757-83ef-9481-8751c9ba8766`)
+- Source → `🔁 NAMER | Active Recurring Tasks` (`26e05ce3-3757-83ef-9481-8751c9ba8766`,
+  link `https://app.notion.com/p/0da05ce337578386931301e9d2c4db4d`)
 - Log → `⚠️ Namer Paid Search Overdue Log` (`e6805ce3-3757-82b5-b766-8713fcb4c60d`)
 
 `NOTION_API_TOKEN` must be set in `.env` for local runs, and pushed to the
@@ -99,7 +122,11 @@ ntn workers env push  # push .env values to the deployed worker
 ```shell
 ./test.sh          # dry run against the deployed worker — writes nothing
 ./test.sh --write  # real run — creates log rows and posts to Slack
+./test.sh reminders          # afternoon reminder, dry run — posts nothing
+./test.sh reminders --write  # afternoon reminder, real run — posts to Slack
 ```
+
+The `reminders` modes run the `runSendReminders` tool instead.
 
 Both modes run the `runLogOverdueTasks` tool (`src/tools/`). It shares
 `src/runOverdueLog.ts` with the workflow and returns a summary
