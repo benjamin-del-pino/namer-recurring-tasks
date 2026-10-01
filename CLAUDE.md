@@ -92,16 +92,9 @@ for (const [index, page] of pages.entries()) {
 
 ## Notion API Access
 
-The workflow handler receives a Notion SDK client as `context.notion`. It needs `NOTION_API_TOKEN` before the first API request.
+The workflow handler receives a Notion SDK client as `context.notion`. It is authenticated by the platform, so no Notion token is needed in `.env` or the deployed environment.
 
-For local development, put the token in `.env`. For a deployed worker, push the environment after deployment:
-
-```shell
-ntn workers deploy
-ntn workers env push
-```
-
-Never commit `.env` or hard-code credentials. If the token is missing, ask the user to create one at https://app.notion.com/developers/tokens, grant it access to the relevant content, and add it to `.env` themselves.
+Never commit `.env` or hard-code credentials.
 
 ## Build and Development Commands
 
@@ -160,8 +153,7 @@ This worker ports the classic-API `namer-recurring-tasks` project to the alpha f
 - `src/slackNotify.ts` groups overdue tasks by their source `Channel ID` property, builds the message, and posts it via Slack's `chat.postMessage`. Tasks with no `Channel ID` are skipped with a `console.warn`, not a run failure.
 - The message is Block Kit: one section per task (`block_id: task_<pageId>`) with a **Complete** button (`action_id: COMPLETE_ACTION_ID` = `complete_task_recurring_worker`, `value` = Notion page ID), capped at 45 task blocks plus an overflow line. It mirrors the n8n flow `pjGoufIAZrpougvp`. Do not rename the action_id: the planned click-listener worker routes on it.
 - The Slack app ("Recurring Tasks Notifier") is shared with n8n, and its single Interactivity URL currently points at the n8n handler `KrS619xP0JKX3K7F`. That handler only acts on `complete_task` / `complete_task_recurring`, so clicks on this worker's buttons are ignored for now. Routing them to a listener worker still needs a decision: either n8n forwards this action_id, or the worker takes over the URL and handles all three.
-- `NOTION_API_TOKEN` is set in the local `.env` (added 2026-08-27). It still needs `ntn workers env push` after the first deploy so the deployed worker has it too.
-- `SLACK_API_KEY` (a Slack bot token with `chat:write`) is needed in `.env` for local runs and must be pushed with `ntn workers env push` after deploy, same as `NOTION_API_TOKEN`. Missing it throws a `TerminalError` from `postToChannel` so the run fails clearly instead of being retried automatically.
+- `SLACK_API_KEY` (a Slack bot token with `chat:write`) is needed in `.env` for local runs and must be pushed with `ntn workers env push` after deploy. Missing it throws a `TerminalError` from `postToChannel` so the run fails clearly instead of being retried automatically.
 - `src/overdueLog.ts` currently points at the **sandbox test replica** data sources (`SOURCE_DATA_SOURCE_ID`, `LOG_DATA_SOURCE_ID`, `SOURCE_DATABASE_URL`). Swap to the production values noted in that file's comments before going live.
 - Deployment (`ntn workers deploy`, `ntn workers env push`) is handled by the user directly — do not run it from here unless explicitly asked.
 - Known CLI limitations (ntn 0.23.13): `ntn workers exec --local` still needs a classic `src/index.ts`, and `ntn workers exec logOverdueTasks` fails with "does not declare workflow.manual". No SDK version up to 0.9.2 offers a manual workflow trigger. For on-demand runs use `./test.sh` (dry run) or `./test.sh --write`, which exec the `runLogOverdueTasks` tool. Verified 2026-09-30: a real run posted a Complete-button message to #tests.

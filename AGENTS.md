@@ -92,16 +92,9 @@ for (const [index, page] of pages.entries()) {
 
 ## Notion API Access
 
-The workflow handler receives a Notion SDK client as `context.notion`. It needs `NOTION_API_TOKEN` before the first API request.
+The workflow handler receives a Notion SDK client as `context.notion`. It is authenticated by the platform, so no Notion token is needed in `.env` or the deployed environment.
 
-For local development, put the token in `.env`. For a deployed worker, push the environment after deployment:
-
-```shell
-ntn workers deploy
-ntn workers env push
-```
-
-Never commit `.env` or hard-code credentials. If the token is missing, ask the user to create one at https://app.notion.com/developers/tokens, grant it access to the relevant content, and add it to `.env` themselves.
+Never commit `.env` or hard-code credentials.
 
 ## Build and Development Commands
 
@@ -155,7 +148,6 @@ Start with the first error and the last completed step. Check whether a failed s
 This worker ports the classic-API `namer-recurring-tasks` project to the alpha file-based workflow API.
 
 - `logOverdueTasks` (`src/workflows/logOverdueTasks.ts`) is the only capability. It runs on `triggers.scheduled()` (recurrence), scans the recurring-tasks database for overdue tasks, and appends one row per task to the overdue log. Safe to re-run: rows already logged for the run date are skipped.
-- `NOTION_API_TOKEN` is set in the local `.env` (added 2026-08-27). It still needs `ntn workers env push` after the first deploy so the deployed worker has it too.
 - `src/overdueLog.ts` currently points at the **sandbox test replica** data sources (`SOURCE_DATA_SOURCE_ID`, `LOG_DATA_SOURCE_ID`). Swap to the production IDs noted in that file's comments before going live.
 - Deployment (`ntn workers deploy`, `ntn workers env push`) is handled by the user directly — do not run it from here unless explicitly asked.
 - Known CLI limitation: `ntn workers exec --local` (ntn 0.22.10) looks for a classic `src/index.ts` entry point and does not discover alpha `src/workflows/` files, so `test.sh`'s local modes fail with "Could not find src/index.ts". Use `test.sh --remote` against a deployed worker instead until Notion updates that command.

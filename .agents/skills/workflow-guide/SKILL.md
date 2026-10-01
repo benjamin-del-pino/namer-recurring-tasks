@@ -117,7 +117,7 @@ Catch errors only when the workflow can recover, translate the failure into a cl
 
 ## Authentication
 
-Use `context.notion` for Notion API calls. Before calling it, ensure `NOTION_API_TOKEN` exists in `.env` for local execution and in the deployed environment. Read third-party credentials from `process.env`; never embed them in code or ask the user to paste secrets into chat.
+Use `context.notion` for Notion API calls. It is authenticated by the platform, so no Notion token is needed. Read third-party credentials from `process.env`; never embed them in code or ask the user to paste secrets into chat.
 
 ## Verification
 

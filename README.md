@@ -97,13 +97,11 @@ going live:
   link `https://app.notion.com/p/0da05ce337578386931301e9d2c4db4d`)
 - Log → `⚠️ Namer Paid Search Overdue Log` (`e6805ce3-3757-82b5-b766-8713fcb4c60d`)
 
-`NOTION_API_TOKEN` must be set in `.env` for local runs, and pushed to the
-deployed worker separately (see below).
+No Notion token is needed: `context.notion` is authenticated by the platform.
 
 Slack notifications need `SLACK_API_KEY` (a Slack bot token with the
 `chat:write` scope — add `chat:write.public` too if the bot should post to
-public channels it hasn't been invited to) set the same way — in `.env`
-for local runs, then pushed to the deployed worker with
+public channels it hasn't been invited to) in `.env` for local runs, then pushed to the deployed worker with
 `ntn workers env push`. Tasks without a `Channel ID` are skipped (with a
 warning in the run logs) rather than failing the run.
 
