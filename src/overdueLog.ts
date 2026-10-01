@@ -57,6 +57,8 @@ export type OverdueTask = {
 	dueDate: string;
 	notes: string;
 	ownerIds: string[];
+	/** Owner display names, for Slack. Empty if the token can't read user info. */
+	ownerNames: string[];
 	channelId: string | null;
 };
 
@@ -184,6 +186,10 @@ export function toOverdueTask(page: NotionPage): OverdueTask | null {
 	const dueDate: string | undefined = page.properties["Due Date"]?.date?.start;
 	if (!dueDate) return null;
 
+	// Notion only fills in `name` when the integration has the "Read user
+	// information" capability; otherwise each person is just an ID.
+	const owners: { id?: string; name?: string | null }[] = page.properties["Owner"]?.people ?? [];
+
 	return {
 		pageId: page.id,
 		url: page.url,
@@ -193,9 +199,8 @@ export function toOverdueTask(page: NotionPage): OverdueTask | null {
 		status: page.properties["Status"]?.status?.name ?? null,
 		dueDate: dueDate.slice(0, 10),
 		notes: plainText(page.properties["Notes"]),
-		ownerIds: (page.properties["Owner"]?.people ?? [])
-			.map((person: { id?: string }) => person.id)
-			.filter((id: string | undefined): id is string => Boolean(id)),
+		ownerIds: owners.map((person) => person.id).filter((id): id is string => Boolean(id)),
+		ownerNames: owners.map((person) => person.name?.trim()).filter((name): name is string => Boolean(name)),
 		channelId: plainText(page.properties["Channel ID"]) || null,
 	};
 }

@@ -64,12 +64,22 @@ function escapeSlack(text: string): string {
 	return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/**
+ * "Owner: A, B". Falls back to "unknown" when the page has owners but Notion
+ * returned no names (the token lacks user-info access), and "none" when unset.
+ */
+function ownerLabel(task: OverdueTask): string {
+	if (task.ownerNames.length > 0) return `Owner: ${escapeSlack(task.ownerNames.join(", "))}`;
+	return task.ownerIds.length > 0 ? "Owner: unknown" : "Owner: none";
+}
+
 function bulletList(tasks: OverdueTask[]): string {
-	return tasks.map((task) => `• <${task.url}|${escapeSlack(task.taskName)}>`).join("\n");
+	return tasks.map((task) => `• <${task.url}|${escapeSlack(task.taskName)}> (${ownerLabel(task)})`).join("\n");
 }
 
 /**
- * One task as its own section, linked to its Notion page, with a Complete button
+ * One task as its own section, linked to its Notion page with its owner on a
+ * second line (the listener keeps this text when it marks the row done), and a Complete button
  * whose `value` is the page ID and whose `block_id` is `task_<pageId>` so the
  * listener can rewrite just that row after a click.
  */
@@ -77,7 +87,7 @@ function taskBlock(task: OverdueTask): Block {
 	return {
 		type: "section",
 		block_id: `task_${task.pageId}`,
-		text: { type: "mrkdwn", text: `*<${task.url}|${escapeSlack(task.taskName)}>*` },
+		text: { type: "mrkdwn", text: `*<${task.url}|${escapeSlack(task.taskName)}>*\n${ownerLabel(task)}` },
 		accessory: {
 			type: "button",
 			action_id: COMPLETE_ACTION_ID,
