@@ -15,6 +15,14 @@ export type RemindersOptions = {
 	timeZone: string;
 	dryRun: boolean;
 	step: StepRunner;
+	/**
+	 * Prepended to every step name. Empty for the afternoon workflow, so its saved
+	 * runs keep their names. The morning run sets one because it already has a
+	 * step called "Fetch overdue tasks" and names must be unique within a run.
+	 */
+	stepPrefix?: string;
+	/** Overdue tasks to list before the "X other overdue" line. Defaults to the afternoon's 3. */
+	maxOverdue?: number;
 };
 
 export type RemindersSummary = {
@@ -38,16 +46,16 @@ function toTasks(pages: Parameters<typeof toOverdueTask>[0][]): OverdueTask[] {
  * dedupe, so a manual re-run posts again (a workflow retry replays its steps
  * and doesn't). Keep step names and order stable.
  */
-export async function runReminders({ notion, timeZone, dryRun, step }: RemindersOptions): Promise<RemindersSummary> {
+export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix = "", maxOverdue }: RemindersOptions): Promise<RemindersSummary> {
 	const today = localDateISO(timeZone);
 	console.log(`Sending task reminders for ${today} (${timeZone})${dryRun ? " [DRY RUN]" : ""}.`);
 
-	const dueTodayPages = await step("Fetch tasks due today", () =>
+	const dueTodayPages = await step(`${stepPrefix}Fetch tasks due today`, () =>
 		queryAll(notion, SOURCE_DATA_SOURCE_ID, {
 			and: [{ property: "Due Date", date: { equals: today } }, NOT_COMPLETE],
 		}),
 	);
-	const overduePages = await step("Fetch overdue tasks", () =>
+	const overduePages = await step(`${stepPrefix}Fetch overdue tasks`, () =>
 		queryAll(notion, SOURCE_DATA_SOURCE_ID, {
 			and: [{ property: "Due Date", date: { before: today } }, NOT_COMPLETE],
 		}),
@@ -70,6 +78,7 @@ export async function runReminders({ notion, timeZone, dryRun, step }: Reminders
 			dueTodayByChannel.get(channelId) ?? [],
 			overdueByChannel.get(channelId) ?? [],
 			SOURCE_DATABASE_URL,
+			maxOverdue,
 		);
 		if (dryRun) {
 			console.log(
@@ -80,7 +89,7 @@ export async function runReminders({ notion, timeZone, dryRun, step }: Reminders
 			continue;
 		}
 
-		await step(`Notify Slack channel ${channelId}`, () => postToChannel(channelId, message));
+		await step(`${stepPrefix}Notify Slack channel ${channelId}`, () => postToChannel(channelId, message));
 		notifiedChannels.push(channelId);
 	}
 

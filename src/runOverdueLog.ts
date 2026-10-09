@@ -12,7 +12,7 @@ import {
 	toOverdueTask,
 	WRITE_GAP_MS,
 } from "./overdueLog.js";
-import { buildMessage, groupByChannel, postToChannel } from "./slackNotify.js";
+import { runReminders } from "./runReminders.js";
 
 /**
  * Runs one unit of work. The workflow passes `context.step` (durable, replayed
@@ -34,13 +34,16 @@ export type OverdueLogSummary = {
 	overdue: number;
 	created: number;
 	skipped: number;
+	dueToday: number;
 	notifiedChannels: string[];
 };
 
 /**
- * Logs every overdue task not already logged today, then posts one Slack
- * message per `Channel ID` for the tasks newly logged this run. Safe to re-run:
- * the log's own rows for today act as the dedupe for both writes and Slack.
+ * Logs every overdue task not already logged today, then posts the same Slack
+ * message as the afternoon reminder (due today first, then the oldest overdue
+ * tasks) via runReminders. Safe to re-run for the log: its own rows for today
+ * dedupe the writes. The Slack message is not deduped, so a manual re-run posts
+ * again, like the afternoon one.
  */
 export async function runOverdueLog({ notion, timeZone, dryRun, step }: OverdueLogOptions): Promise<OverdueLogSummary> {
 	const today = localDateISO(timeZone);
@@ -76,7 +79,6 @@ export async function runOverdueLog({ notion, timeZone, dryRun, step }: OverdueL
 
 	let created = 0;
 	let skipped = 0;
-	const notifiable: OverdueTask[] = [];
 
 	for (const task of tasks) {
 		const key = dedupeKey(task.taskName, task.clientId);
@@ -90,13 +92,11 @@ export async function runOverdueLog({ notion, timeZone, dryRun, step }: OverdueL
 		if (dryRun) {
 			console.log(`[DRY RUN] would create log row for "${task.taskName}" (${task.url})`);
 			created++;
-			notifiable.push(task);
 			continue;
 		}
 
 		await step(`Create log row for task ${task.pageId}`, () => createLogRow(notion, task, today));
 		created++;
-		notifiable.push(task);
 		await sleep(WRITE_GAP_MS);
 	}
 
@@ -105,22 +105,15 @@ export async function runOverdueLog({ notion, timeZone, dryRun, step }: OverdueL
 			+ ` ${skipped} skipped as already logged.`,
 	);
 
-	const notifiedChannels: string[] = [];
-	const channelGroups = groupByChannel(notifiable);
-	for (const [channelId, channelTasks] of channelGroups) {
-		const message = buildMessage(channelTasks);
-		if (dryRun) {
-			console.log(
-				`[DRY RUN] would notify Slack channel ${channelId}:\n${message.text}\n`
-					+ `Blocks: ${JSON.stringify({ blocks: message.blocks })}`,
-			);
-			notifiedChannels.push(channelId);
-			continue;
-		}
+	const reminders = await runReminders({ notion, timeZone, dryRun, step, stepPrefix: "Morning: ", maxOverdue: Number.POSITIVE_INFINITY });
 
-		await step(`Notify Slack channel ${channelId}`, () => postToChannel(channelId, message));
-		notifiedChannels.push(channelId);
-	}
-
-	return { today, dryRun, overdue: tasks.length, created, skipped, notifiedChannels };
+	return {
+		today,
+		dryRun,
+		overdue: tasks.length,
+		created,
+		skipped,
+		dueToday: reminders.dueToday,
+		notifiedChannels: reminders.notifiedChannels,
+	};
 }

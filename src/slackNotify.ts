@@ -128,22 +128,28 @@ export function buildMessage(tasks: OverdueTask[]): SlackMessage {
  */
 const MAX_DUE_TODAY_BLOCKS = 40;
 
-/** Overdue tasks shown in a reminder; the rest are counted with a link to Notion. */
-const MAX_REMINDER_OVERDUE = 3;
+/** Overdue tasks shown in the afternoon reminder; the rest are counted with a link to Notion. */
+export const MAX_REMINDER_OVERDUE = 3;
+
+/** Slack rejects a message with more blocks than this. */
+const SLACK_BLOCK_LIMIT = 50;
 
 const DUE_TODAY_HEADER = "Reminder: these tasks are due today:";
 const NOTHING_DUE_TODAY = "Nothing due today.";
 const STILL_OVERDUE_HEADER = "Still overdue:";
 
 /**
- * Builds the afternoon reminder for one channel: every task due today, then the
- * first `MAX_REMINDER_OVERDUE` overdue tasks (callers pass them oldest first)
- * and a count of the rest with a link to the database.
+ * Builds the reminder for one channel: every task due today, then the first
+ * `maxOverdue` overdue tasks (callers pass them oldest first) and a count of the
+ * rest with a link to the database. The afternoon run keeps the default of 3; the
+ * morning run passes Infinity to list them all, which is still limited by the
+ * room left under Slack's block limit, so the message can never be rejected.
  */
 export function buildReminderMessage(
 	dueToday: OverdueTask[],
 	overdue: OverdueTask[],
 	databaseUrl: string,
+	maxOverdue: number = MAX_REMINDER_OVERDUE,
 ): SlackMessage {
 	const blocks: Block[] = [];
 	const textParts: string[] = [];
@@ -168,7 +174,10 @@ export function buildReminderMessage(
 	}
 
 	if (overdue.length > 0) {
-		const shown = overdue.slice(0, MAX_REMINDER_OVERDUE);
+		// After the divider and the header, keep one block free for the overflow line unless everything fits.
+		const slots = SLACK_BLOCK_LIMIT - blocks.length - 2;
+		const room = overdue.length <= slots ? slots : slots - 1;
+		const shown = overdue.slice(0, Math.max(0, Math.min(maxOverdue, room)));
 		blocks.push({ type: "divider" });
 		blocks.push({ type: "section", text: { type: "mrkdwn", text: STILL_OVERDUE_HEADER } });
 		for (const task of shown) {
@@ -199,8 +208,53 @@ type SlackResponse = {
 	error?: string;
 };
 
-/** Posts a Block Kit message to a Slack channel via `chat.postMessage`. */
+/**
+ * Posts through the Slack-hosted app's webhook. The app posts the message and
+ * owns its Complete buttons (instant "Completed by", Notion write handed to the
+ * recurring-tasks-slack-actions worker). The webhook answers before the app has
+ * posted, so an app-side failure (bad token, channel the app can't reach) shows
+ * in the app's logs (`slack activity`), not as an error here.
+ */
+async function postViaHostedApp(url: string, channelId: string, message: SlackMessage): Promise<void> {
+	const secret = process.env.RELAY_SECRET;
+	if (!secret) {
+		throw new TerminalError("RELAY_SECRET is not set; it must match the Slack app's RELAY_SECRET.");
+	}
+
+	const response = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({
+			token: secret,
+			channel: channelId,
+			text: message.text,
+			blocks_json: JSON.stringify(message.blocks),
+		}),
+	});
+
+	if (!response.ok) {
+		throw new Error(`Slack app webhook failed for channel ${channelId}: ${response.status}`);
+	}
+
+	const body = (await response.json().catch(() => ({}))) as SlackResponse;
+	if (body.ok === false) {
+		throw new Error(`Slack app webhook rejected the message for channel ${channelId}: ${body.error ?? "unknown error"}`);
+	}
+}
+
+/**
+ * Posts a Block Kit message to a Slack channel. With `SLACK_POST_WEBHOOK_URL`
+ * set it goes through the hosted Slack app; otherwise it falls back to
+ * `chat.postMessage` with `SLACK_API_KEY` (the older Notifier/Tester app).
+ */
 export async function postToChannel(channelId: string, message: SlackMessage): Promise<void> {
+	const hostedAppUrl = process.env.SLACK_POST_WEBHOOK_URL;
+	if (hostedAppUrl) {
+		console.log(`Posting to ${channelId} via the hosted Slack app webhook.`);
+		return postViaHostedApp(hostedAppUrl, channelId, message);
+	}
+	console.log(`Posting to ${channelId} via chat.postMessage (SLACK_POST_WEBHOOK_URL is empty or unset in this runtime).`);
+
 	const token = process.env.SLACK_API_KEY;
 	if (!token) {
 		throw new TerminalError("SLACK_API_KEY is not set; add it to .env (and push it to the deployed worker).");
