@@ -60,6 +60,8 @@ export type OverdueTask = {
 	/** Owner display names, for Slack. Empty if the token can't read user info. */
 	ownerNames: string[];
 	channelId: string | null;
+	/** The `Run by` select: "Human", "Agent" or null when unset. Agent tasks get a tag in their Slack thread. */
+	runBy: string | null;
 };
 
 /**
@@ -202,6 +204,7 @@ export function toOverdueTask(page: NotionPage): OverdueTask | null {
 		ownerIds: owners.map((person) => person.id).filter((id): id is string => Boolean(id)),
 		ownerNames: owners.map((person) => person.name?.trim()).filter((name): name is string => Boolean(name)),
 		channelId: plainText(page.properties["Channel ID"]) || null,
+		runBy: page.properties["Run by"]?.select?.name ?? null,
 	};
 }
 

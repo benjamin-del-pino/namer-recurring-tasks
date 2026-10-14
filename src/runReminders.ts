@@ -8,7 +8,7 @@ import {
 	toOverdueTask,
 } from "./overdueLog.js";
 import type { StepRunner } from "./runOverdueLog.js";
-import { buildReminderMessage, groupByChannel, postToChannel } from "./slackNotify.js";
+import { buildChannelPosts, groupByChannel, postToChannel } from "./slackNotify.js";
 
 export type RemindersOptions = {
 	notion: Client;
@@ -41,8 +41,9 @@ function toTasks(pages: Parameters<typeof toOverdueTask>[0][]): OverdueTask[] {
 }
 
 /**
- * Posts one reminder per `Channel ID`: every open task due today, then the
- * oldest overdue tasks. Reads only; nothing is written to Notion. There is no
+ * Posts each `Channel ID`'s reminder, one Slack message per task: every open
+ * task due today, then the oldest overdue tasks, with an agent tag in the thread
+ * of tasks Run by Agent. Reads only; nothing is written to Notion. There is no
  * dedupe, so a manual re-run posts again (a workflow retry replays its steps
  * and doesn't). Keep step names and order stable.
  */
@@ -74,22 +75,29 @@ export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix 
 
 	const notifiedChannels: string[] = [];
 	for (const channelId of channelIds) {
-		const message = buildReminderMessage(
+		const posts = buildChannelPosts(
 			dueTodayByChannel.get(channelId) ?? [],
 			overdueByChannel.get(channelId) ?? [],
 			SOURCE_DATABASE_URL,
 			maxOverdue,
 		);
-		if (dryRun) {
-			console.log(
-				`[DRY RUN] would send reminder to Slack channel ${channelId}:\n${message.text}\n`
-					+ `Blocks: ${JSON.stringify({ blocks: message.blocks })}`,
-			);
-			notifiedChannels.push(channelId);
-			continue;
-		}
+		console.log(`${posts.length} message(s) for Slack channel ${channelId}.`);
 
-		await step(`${stepPrefix}Notify Slack channel ${channelId}`, () => postToChannel(channelId, message));
+		// One step per message, so a retry re-posts only the ones that failed.
+		for (const [index, post] of posts.entries()) {
+			const thread = post.kind === "task" ? post.thread : null;
+			const name = post.kind === "task"
+				? `${stepPrefix}Notify task ${index + 1} in ${channelId} (${post.task.pageId})`
+				: `${stepPrefix}Notify overflow in ${channelId}`;
+			if (dryRun) {
+				console.log(
+					`[DRY RUN] ${name}:\n${post.message.text}${thread ? `\n  thread: ${thread.text}` : ""}\n`
+						+ `Blocks: ${JSON.stringify({ blocks: post.message.blocks })}`,
+				);
+				continue;
+			}
+			await step(name, () => postToChannel(channelId, post.message, thread));
+		}
 		notifiedChannels.push(channelId);
 	}
 
