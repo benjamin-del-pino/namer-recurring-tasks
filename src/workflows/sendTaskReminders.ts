@@ -13,7 +13,7 @@ import { runReminders } from "../runReminders.js";
 export default createWorkflow({
 	name: "Send Afternoon Task Reminders",
 	description:
-		"Posts a Slack reminder per channel listing NAMER | Active Recurring Tasks due today, plus the three oldest overdue tasks and a count of the rest.",
+		"Posts one Slack message per NAMER | Active Recurring Tasks task due today, plus the three oldest overdue tasks and a count of the rest, tagging the agent in the thread of tasks Run by Agent.",
 	triggers: [triggers.scheduled()],
 	handler: async (event, context) => {
 		await runReminders({
