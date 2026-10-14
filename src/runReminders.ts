@@ -9,7 +9,7 @@ import {
 	toOverdueTask,
 } from "./overdueLog.js";
 import type { StepRunner } from "./runOverdueLog.js";
-import { buildChannelPosts, groupByChannel, postToChannel } from "./slackNotify.js";
+import { buildChannelPosts, groupByChannel, postToChannel, type Section } from "./slackNotify.js";
 
 export type RemindersOptions = {
 	notion: Client;
@@ -43,6 +43,9 @@ export type RemindersSummary = {
  */
 const POST_GAP_MS = 2_000;
 
+/** Step-name label per section heading. Keep stable: step names are matched on replay. */
+const HEADING_STEP: Record<Section, string> = { dueToday: "due-today", agent: "agent", overdue: "overdue" };
+
 /** Tasks already ticked off today shouldn't be nagged about. */
 const NOT_COMPLETE = { property: "Status", status: { does_not_equal: "Complete" } } as const;
 
@@ -51,8 +54,9 @@ function toTasks(pages: Parameters<typeof toOverdueTask>[0][]): OverdueTask[] {
 }
 
 /**
- * Posts each `Channel ID`'s reminder, one Slack message per task: every open
- * task due today, then the oldest overdue tasks, with an agent tag in the thread
+ * Posts each `Channel ID`'s reminder, one Slack message per task under a
+ * heading message per section: every open task due today, then those due today
+ * that are Run by Agent, then the oldest overdue tasks, with an agent tag in the thread
  * of tasks Run by Agent. Reads only; nothing is written to Notion. There is no
  * dedupe, so a manual re-run posts again (a workflow retry replays its steps
  * and doesn't). Keep step names and order stable.
@@ -98,7 +102,9 @@ export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix 
 			const thread = post.kind === "task" ? post.thread : null;
 			const name = post.kind === "task"
 				? `${stepPrefix}Notify task ${index + 1} in ${channelId} (${post.task.pageId})`
-				: `${stepPrefix}Notify overflow in ${channelId}`;
+				: post.kind === "heading"
+					? `${stepPrefix}Notify ${HEADING_STEP[post.section]} heading in ${channelId}`
+					: `${stepPrefix}Notify overflow in ${channelId}`;
 			if (dryRun) {
 				console.log(
 					`[DRY RUN] ${name}:\n${post.message.text}${thread ? `\n  thread: ${thread.text}` : ""}\n`

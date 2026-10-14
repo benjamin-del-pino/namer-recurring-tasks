@@ -127,16 +127,38 @@ export const MAX_REMINDER_OVERDUE = 3;
 
 export type TaskLabel = "Due today" | "Overdue";
 
-/** One post in a channel's reminder: a task with its Complete button (and maybe a thread reply), or the closing count. */
+export type Section = "dueToday" | "agent" | "overdue";
+
+/**
+ * Section headings. The greeting goes on whichever heading comes first, so a
+ * reminder with nothing due today still opens with "Hey there".
+ */
+const HEADINGS: Record<Section, { first: string; later: string }> = {
+	dueToday: { first: "Hey there, the following tasks are due today:", later: "The following tasks are due today:" },
+	agent: { first: "Hey there, these tasks due today are for the Agent:", later: "These tasks due today are for the Agent:" },
+	overdue: { first: "Hey there, these tasks are overdue:", later: "These are overdue:" },
+};
+
+/** One post in a channel's reminder: a section heading, a task with its Complete button (and maybe a thread reply), or the closing count. */
 export type ChannelPost =
+	| { kind: "heading"; section: Section; message: SlackMessage }
 	| { kind: "task"; task: OverdueTask; message: SlackMessage; thread: SlackMessage | null }
 	| { kind: "overflow"; others: number; message: SlackMessage };
 
-/** One task as its own message: a heading line, then the task row with its Complete button. */
+/** A plain text message with no button, used for the section headings. */
+export function buildHeadingMessage(text: string): SlackMessage {
+	return { text, blocks: [{ type: "section", text: { type: "mrkdwn", text } }] };
+}
+
+/**
+ * One task as its own message: the task row with its Complete button. The
+ * section heading is its own message, so the label only goes in the fallback
+ * `text`, which is what notifications show.
+ */
 export function buildTaskMessage(task: OverdueTask, label: TaskLabel): SlackMessage {
 	return {
 		text: `${label}: ${task.taskName} (${ownerLabel(task)})`,
-		blocks: [{ type: "section", text: { type: "mrkdwn", text: `*${label}*` } }, taskBlock(task)],
+		blocks: [taskBlock(task)],
 	};
 }
 
@@ -162,11 +184,15 @@ export function buildOverflowMessage(others: number, databaseUrl: string): Slack
 }
 
 /**
- * Everything one channel's reminder posts, in order: one message per task due
- * today, then one per overdue task (callers pass them oldest first) up to
- * `maxOverdue`, then a count of the rest with a link to the database. The
- * afternoon run keeps the default of 3; the morning run passes Infinity. Tasks
- * Run by Agent carry a thread reply.
+ * Everything one channel's reminder posts, in order: a heading and one message
+ * per task due today, then a heading and one message per task due today that is
+ * Run by Agent, then a heading and one message per overdue task (callers pass
+ * them oldest first) up to `maxOverdue`, then a count of the rest with a link to
+ * the database. Agent tasks get their own section because their thread breaks
+ * Slack's grouping of the messages around them; overdue Agent tasks stay in the
+ * overdue section. An empty section gets no heading. The afternoon run keeps the
+ * default of 3; the morning run passes Infinity. Tasks Run by Agent carry a
+ * thread reply.
  */
 export function buildChannelPosts(
 	dueToday: OverdueTask[],
@@ -180,10 +206,29 @@ export function buildChannelPosts(
 		message: buildTaskMessage(t, label),
 		thread: buildAgentThread(t),
 	});
-	const shown = overdue.slice(0, Math.max(0, maxOverdue));
-	const posts = [...dueToday.map((t) => task(t, "Due today")), ...shown.map((t) => task(t, "Overdue"))];
-	const others = overdue.length - shown.length;
-	if (others > 0) posts.push({ kind: "overflow", others, message: buildOverflowMessage(others, databaseUrl) });
+	const posts: ChannelPost[] = [];
+	const heading = (section: Section) => {
+		const text = posts.length === 0 ? HEADINGS[section].first : HEADINGS[section].later;
+		posts.push({ kind: "heading", section, message: buildHeadingMessage(text) });
+	};
+
+	const forPeople = dueToday.filter((t) => t.runBy !== "Agent");
+	const forAgent = dueToday.filter((t) => t.runBy === "Agent");
+	if (forPeople.length > 0) {
+		heading("dueToday");
+		posts.push(...forPeople.map((t) => task(t, "Due today")));
+	}
+	if (forAgent.length > 0) {
+		heading("agent");
+		posts.push(...forAgent.map((t) => task(t, "Due today")));
+	}
+	if (overdue.length > 0) {
+		heading("overdue");
+		const shown = overdue.slice(0, Math.max(0, maxOverdue));
+		posts.push(...shown.map((t) => task(t, "Overdue")));
+		const others = overdue.length - shown.length;
+		if (others > 0) posts.push({ kind: "overflow", others, message: buildOverflowMessage(others, databaseUrl) });
+	}
 	return posts;
 }
 
