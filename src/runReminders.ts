@@ -4,6 +4,7 @@ import {
 	type OverdueTask,
 	queryAll,
 	SOURCE_DATA_SOURCE_ID,
+	sleep,
 	SOURCE_DATABASE_URL,
 	toOverdueTask,
 } from "./overdueLog.js";
@@ -32,6 +33,15 @@ export type RemindersSummary = {
 	overdue: number;
 	notifiedChannels: string[];
 };
+
+/**
+ * Pause before each message after a channel's first. The hosted app's webhook
+ * answers before the app posts, so back-to-back calls race and land out of
+ * order (seen 2026-10-14: the due-today task posted after both overdue ones,
+ * all within ~1s). 2s covers that; a cold start (~1.5-1.8s) is close, so
+ * untested as a guarantee.
+ */
+const POST_GAP_MS = 2_000;
 
 /** Tasks already ticked off today shouldn't be nagged about. */
 const NOT_COMPLETE = { property: "Status", status: { does_not_equal: "Complete" } } as const;
@@ -96,7 +106,11 @@ export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix 
 				);
 				continue;
 			}
-			await step(name, () => postToChannel(channelId, post.message, thread));
+			// The pause sits inside the step, so a replayed step doesn't wait again.
+			await step(name, async () => {
+				if (index > 0) await sleep(POST_GAP_MS);
+				await postToChannel(channelId, post.message, thread);
+			});
 		}
 		notifiedChannels.push(channelId);
 	}
