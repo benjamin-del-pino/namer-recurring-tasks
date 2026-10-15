@@ -40,6 +40,9 @@ const TEXT_LIMIT = 2000;
 /** The log's `Cadence` select has this option; the source leaves Cadence blank on some rows. */
 const CADENCE_FALLBACK = "No Cadence";
 
+/** The source's Cadence option for one-off tasks. */
+const NO_CADENCE = "No Cadence";
+
 type NotionPage = {
 	id: string;
 	url: string;
@@ -181,6 +184,15 @@ export async function queryAll(
 	} while (cursor);
 
 	return pages;
+}
+
+/**
+ * True when a source task's Cadence is explicitly "No Cadence". Those one-off
+ * tasks are neither logged nor posted, as in n8n. A blank Cadence doesn't count:
+ * n8n logged those, so they stay in.
+ */
+export function isNoCadence(page: NotionPage): boolean {
+	return page.properties["Cadence"]?.select?.name === NO_CADENCE;
 }
 
 /** Reduces a source page to the fields the log needs. */

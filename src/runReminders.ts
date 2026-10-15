@@ -1,5 +1,6 @@
 import type { Client } from "@notionhq/client";
 import {
+	isNoCadence,
 	localDateISO,
 	type OverdueTask,
 	queryAll,
@@ -49,8 +50,12 @@ const HEADING_STEP: Record<Section, string> = { dueToday: "due-today", agent: "a
 /** Tasks already ticked off today shouldn't be nagged about. */
 const NOT_COMPLETE = { property: "Status", status: { does_not_equal: "Complete" } } as const;
 
+/** One-off tasks (Cadence "No Cadence") are never posted, as in n8n; Annual and blank Cadence are. */
 function toTasks(pages: Parameters<typeof toOverdueTask>[0][]): OverdueTask[] {
-	return pages.map(toOverdueTask).filter((task): task is OverdueTask => task !== null);
+	return pages
+		.filter((page) => !isNoCadence(page))
+		.map(toOverdueTask)
+		.filter((task): task is OverdueTask => task !== null);
 }
 
 /**

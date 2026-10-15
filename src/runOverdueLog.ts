@@ -2,6 +2,7 @@ import type { Client } from "@notionhq/client";
 import {
 	createLogRow,
 	dedupeKey,
+	isNoCadence,
 	LOG_DATA_SOURCE_ID,
 	localDateISO,
 	type OverdueTask,
@@ -55,10 +56,13 @@ export async function runOverdueLog({ notion, timeZone, dryRun, step }: OverdueL
 			date: { before: today },
 		}),
 	);
-	const tasks = sourcePages
+	const recurringPages = sourcePages.filter((page) => !isNoCadence(page));
+	const tasks = recurringPages
 		.map(toOverdueTask)
 		.filter((task): task is OverdueTask => task !== null);
-	console.log(`Found ${tasks.length} overdue task(s).`);
+	console.log(
+		`Found ${tasks.length} overdue task(s); ignored ${sourcePages.length - recurringPages.length} with No Cadence.`,
+	);
 
 	// Count what today already has so a re-run only fills the gaps.
 	const alreadyLogged = await step("Fetch rows already logged today", () =>
