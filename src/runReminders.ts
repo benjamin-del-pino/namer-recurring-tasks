@@ -70,20 +70,22 @@ export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix 
 	const today = localDateISO(timeZone);
 	console.log(`Sending task reminders for ${today} (${timeZone})${dryRun ? " [DRY RUN]" : ""}.`);
 
-	const dueTodayPages = await step(`${stepPrefix}Fetch tasks due today`, () =>
-		queryAll(notion, SOURCE_DATA_SOURCE_ID, {
+	// Each fetch step returns the slim tasks, not the Notion pages: on production
+	// (2026-10-15) the full pages came to ~480 KB for one step, and every scheduled
+	// run died silently right after that step without saving its result.
+	const dueToday = await step(`${stepPrefix}Fetch tasks due today`, async () =>
+		toTasks(await queryAll(notion, SOURCE_DATA_SOURCE_ID, {
 			and: [{ property: "Due Date", date: { equals: today } }, NOT_COMPLETE],
-		}),
+		})),
 	);
-	const overduePages = await step(`${stepPrefix}Fetch overdue tasks`, () =>
-		queryAll(notion, SOURCE_DATA_SOURCE_ID, {
+	const overdueTasks = await step(`${stepPrefix}Fetch overdue tasks`, async () =>
+		toTasks(await queryAll(notion, SOURCE_DATA_SOURCE_ID, {
 			and: [{ property: "Due Date", date: { before: today } }, NOT_COMPLETE],
-		}),
+		})),
 	);
 
-	const dueToday = toTasks(dueTodayPages);
 	// Oldest first; the page ID tiebreak keeps the order stable across replays.
-	const overdue = toTasks(overduePages).sort(
+	const overdue = [...overdueTasks].sort(
 		(a, b) => a.dueDate.localeCompare(b.dueDate) || a.pageId.localeCompare(b.pageId),
 	);
 	console.log(`Found ${dueToday.length} task(s) due today and ${overdue.length} overdue.`);

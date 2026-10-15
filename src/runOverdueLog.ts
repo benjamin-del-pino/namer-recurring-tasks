@@ -50,36 +50,41 @@ export async function runOverdueLog({ notion, timeZone, dryRun, step }: OverdueL
 	const today = localDateISO(timeZone);
 	console.log(`Logging overdue tasks for ${today} (${timeZone})${dryRun ? " [DRY RUN]" : ""}.`);
 
-	const sourcePages = await step("Fetch overdue tasks", () =>
-		queryAll(notion, SOURCE_DATA_SOURCE_ID, {
+	// Steps return only what later code reads, not the Notion pages: a step result
+	// of full pages (~480 KB on production, 2026-10-15) kills the run silently.
+	const { tasks, ignoredNoCadence } = await step("Fetch overdue tasks", async () => {
+		const sourcePages = await queryAll(notion, SOURCE_DATA_SOURCE_ID, {
 			property: "Due Date",
 			date: { before: today },
-		}),
-	);
-	const recurringPages = sourcePages.filter((page) => !isNoCadence(page));
-	const tasks = recurringPages
-		.map(toOverdueTask)
-		.filter((task): task is OverdueTask => task !== null);
-	console.log(
-		`Found ${tasks.length} overdue task(s); ignored ${sourcePages.length - recurringPages.length} with No Cadence.`,
-	);
+		});
+		const recurringPages = sourcePages.filter((page) => !isNoCadence(page));
+		return {
+			tasks: recurringPages
+				.map(toOverdueTask)
+				.filter((task): task is OverdueTask => task !== null),
+			ignoredNoCadence: sourcePages.length - recurringPages.length,
+		};
+	});
+	console.log(`Found ${tasks.length} overdue task(s); ignored ${ignoredNoCadence} with No Cadence.`);
 
 	// Count what today already has so a re-run only fills the gaps.
-	const alreadyLogged = await step("Fetch rows already logged today", () =>
-		queryAll(notion, LOG_DATA_SOURCE_ID, {
+	const alreadyLoggedKeys = await step("Fetch rows already logged today", async () => {
+		const pages = await queryAll(notion, LOG_DATA_SOURCE_ID, {
 			property: "Date Logged",
 			date: { equals: today },
-		}),
-	);
-	const remaining = new Map<string, number>();
-	for (const page of alreadyLogged) {
-		const key = dedupeKey(
-			titleText(page.properties["Log Entry"]),
-			page.properties["Client"]?.relation?.[0]?.id ?? null,
+		});
+		return pages.map((page) =>
+			dedupeKey(
+				titleText(page.properties["Log Entry"]),
+				page.properties["Client"]?.relation?.[0]?.id ?? null,
+			),
 		);
+	});
+	const remaining = new Map<string, number>();
+	for (const key of alreadyLoggedKeys) {
 		remaining.set(key, (remaining.get(key) ?? 0) + 1);
 	}
-	console.log(`${alreadyLogged.length} row(s) already logged for ${today}.`);
+	console.log(`${alreadyLoggedKeys.length} row(s) already logged for ${today}.`);
 
 	let created = 0;
 	let skipped = 0;
