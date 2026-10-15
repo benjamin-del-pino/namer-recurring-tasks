@@ -8,25 +8,25 @@ type QueryFilter = QueryDataSourceParameters["filter"];
 type PageProperties = CreatePageParameters["properties"];
 
 /**
- * `🔁 Workers Test - NAMER | Active Recurring Tasks` — sandbox replica of the
- * tasks we scan. Swap for `26e05ce3-3757-83ef-9481-8751c9ba8766` (the real
- * `🔁 NAMER | Active Recurring Tasks`) before going live.
+ * `🔁 NAMER | Active Recurring Tasks` (production), the tasks we scan. The
+ * sandbox replica `🔁 Workers Test - NAMER | Active Recurring Tasks` is
+ * `d370848d-c842-40ed-965b-6a57654a3fe3`, for rolling back or testing.
  */
-export const SOURCE_DATA_SOURCE_ID = "d370848d-c842-40ed-965b-6a57654a3fe3";
+export const SOURCE_DATA_SOURCE_ID = "26e05ce3-3757-83ef-9481-8751c9ba8766";
 
 /**
- * Link to the source database, used in Slack's "check Notion" line. Swap for
- * `https://app.notion.com/p/0da05ce337578386931301e9d2c4db4d` (the real
- * `🔁 NAMER | Active Recurring Tasks`) along with `SOURCE_DATA_SOURCE_ID`.
+ * Link to the source database, used in Slack's "check Notion" line. Swap along
+ * with `SOURCE_DATA_SOURCE_ID`; the sandbox is
+ * `https://app.notion.com/p/d042b3500c8a4d8e8724cde42c6ce2e1`.
  */
-export const SOURCE_DATABASE_URL = "https://app.notion.com/p/d042b3500c8a4d8e8724cde42c6ce2e1";
+export const SOURCE_DATABASE_URL = "https://app.notion.com/p/0da05ce337578386931301e9d2c4db4d";
 
 /**
- * `⚠️ Workers Test - Namer Paid Search Overdue Log` — sandbox replica of the
- * log we append to. Swap for `e6805ce3-3757-82b5-b766-8713fcb4c60d` (the real
- * `⚠️ Namer Paid Search Overdue Log`) before going live.
+ * `⚠️ Namer Recurring Tasks Overdue Log` (production, formerly "Namer Paid
+ * Search Overdue Log"), the log we append to. The sandbox replica is
+ * `164d96fc-482f-41f8-9f5a-cc6d6bb2cd37`.
  */
-export const LOG_DATA_SOURCE_ID = "164d96fc-482f-41f8-9f5a-cc6d6bb2cd37";
+export const LOG_DATA_SOURCE_ID = "e6805ce3-3757-82b5-b766-8713fcb4c60d";
 
 /** Argentina has had no DST since 2009, so this zone is a fixed UTC-3. */
 export const DEFAULT_TIMEZONE = "America/Argentina/Buenos_Aires";
@@ -39,6 +39,9 @@ const TEXT_LIMIT = 2000;
 
 /** The log's `Cadence` select has this option; the source leaves Cadence blank on some rows. */
 const CADENCE_FALLBACK = "No Cadence";
+
+/** The source's Cadence option for one-off tasks. */
+const NO_CADENCE = "No Cadence";
 
 type NotionPage = {
 	id: string;
@@ -181,6 +184,15 @@ export async function queryAll(
 	} while (cursor);
 
 	return pages;
+}
+
+/**
+ * True when a source task's Cadence is explicitly "No Cadence". Those one-off
+ * tasks are neither logged nor posted, as in n8n. A blank Cadence doesn't count:
+ * n8n logged those, so they stay in.
+ */
+export function isNoCadence(page: NotionPage): boolean {
+	return page.properties["Cadence"]?.select?.name === NO_CADENCE;
 }
 
 /** Reduces a source page to the fields the log needs. */

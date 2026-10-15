@@ -1,5 +1,6 @@
 import type { Client } from "@notionhq/client";
 import {
+	isNoCadence,
 	localDateISO,
 	type OverdueTask,
 	queryAll,
@@ -24,6 +25,12 @@ export type RemindersOptions = {
 	stepPrefix?: string;
 	/** Overdue tasks to list before the "X other overdue" line. Defaults to the afternoon's 3. */
 	maxOverdue?: number;
+	/**
+	 * Only post to these channels. For the manual tool, to finish a run that
+	 * stopped partway without re-posting the channels already done. The
+	 * workflows leave it unset (every channel).
+	 */
+	channels?: string[] | null;
 };
 
 export type RemindersSummary = {
@@ -49,8 +56,12 @@ const HEADING_STEP: Record<Section, string> = { dueToday: "due-today", agent: "a
 /** Tasks already ticked off today shouldn't be nagged about. */
 const NOT_COMPLETE = { property: "Status", status: { does_not_equal: "Complete" } } as const;
 
+/** One-off tasks (Cadence "No Cadence") are never posted, as in n8n; Annual and blank Cadence are. */
 function toTasks(pages: Parameters<typeof toOverdueTask>[0][]): OverdueTask[] {
-	return pages.map(toOverdueTask).filter((task): task is OverdueTask => task !== null);
+	return pages
+		.filter((page) => !isNoCadence(page))
+		.map(toOverdueTask)
+		.filter((task): task is OverdueTask => task !== null);
 }
 
 /**
@@ -61,31 +72,39 @@ function toTasks(pages: Parameters<typeof toOverdueTask>[0][]): OverdueTask[] {
  * dedupe, so a manual re-run posts again (a workflow retry replays its steps
  * and doesn't). Keep step names and order stable.
  */
-export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix = "", maxOverdue }: RemindersOptions): Promise<RemindersSummary> {
+export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix = "", maxOverdue, channels }: RemindersOptions): Promise<RemindersSummary> {
 	const today = localDateISO(timeZone);
 	console.log(`Sending task reminders for ${today} (${timeZone})${dryRun ? " [DRY RUN]" : ""}.`);
 
-	const dueTodayPages = await step(`${stepPrefix}Fetch tasks due today`, () =>
-		queryAll(notion, SOURCE_DATA_SOURCE_ID, {
+	// Each fetch step returns the slim tasks, not the Notion pages: on production
+	// (2026-10-15) the full pages came to ~480 KB for one step, and every scheduled
+	// run died silently right after that step without saving its result.
+	const dueToday = await step(`${stepPrefix}Fetch tasks due today`, async () =>
+		toTasks(await queryAll(notion, SOURCE_DATA_SOURCE_ID, {
 			and: [{ property: "Due Date", date: { equals: today } }, NOT_COMPLETE],
-		}),
+		})),
 	);
-	const overduePages = await step(`${stepPrefix}Fetch overdue tasks`, () =>
-		queryAll(notion, SOURCE_DATA_SOURCE_ID, {
+	const overdueTasks = await step(`${stepPrefix}Fetch overdue tasks`, async () =>
+		toTasks(await queryAll(notion, SOURCE_DATA_SOURCE_ID, {
 			and: [{ property: "Due Date", date: { before: today } }, NOT_COMPLETE],
-		}),
+		})),
 	);
 
-	const dueToday = toTasks(dueTodayPages);
 	// Oldest first; the page ID tiebreak keeps the order stable across replays.
-	const overdue = toTasks(overduePages).sort(
+	const overdue = [...overdueTasks].sort(
 		(a, b) => a.dueDate.localeCompare(b.dueDate) || a.pageId.localeCompare(b.pageId),
 	);
 	console.log(`Found ${dueToday.length} task(s) due today and ${overdue.length} overdue.`);
 
 	const dueTodayByChannel = groupByChannel(dueToday);
 	const overdueByChannel = groupByChannel(overdue);
-	const channelIds = [...new Set([...dueTodayByChannel.keys(), ...overdueByChannel.keys()])];
+	const channelIds = [...new Set([...dueTodayByChannel.keys(), ...overdueByChannel.keys()])]
+		.filter((channelId) => !channels || channels.includes(channelId));
+	if (channels) {
+		const unknown = channels.filter((channelId) => !dueTodayByChannel.has(channelId) && !overdueByChannel.has(channelId));
+		console.log(`Limited to ${channelIds.length} of the ${channels.length} requested channel(s).`);
+		if (unknown.length > 0) console.warn(`No tasks today for requested channel(s): ${unknown.join(", ")}.`);
+	}
 
 	const notifiedChannels: string[] = [];
 	for (const channelId of channelIds) {
