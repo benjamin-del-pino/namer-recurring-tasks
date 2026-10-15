@@ -14,7 +14,7 @@ import { runOverdueLog } from "../runOverdueLog.js";
 export default createWorkflow({
 	name: "Log Overdue Recurring Tasks",
 	description:
-		"Scans NAMER | Active Recurring Tasks and appends a row to Namer Paid Search Overdue Log for every task whose Due Date is in the past.",
+		"Scans NAMER | Active Recurring Tasks and appends a row to Namer Recurring Tasks Overdue Log for every task whose Due Date is in the past.",
 	triggers: [triggers.scheduled()],
 	handler: async (event, context) => {
 		await runOverdueLog({
