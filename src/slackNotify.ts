@@ -1,5 +1,5 @@
 import { TerminalError } from "@notionhq/workers/alpha/error";
-import type { OverdueTask } from "./overdueLog.js";
+import { type OverdueTask, sleep } from "./overdueLog.js";
 
 /** Groups tasks by their source `Channel ID`, preserving input order. Tasks with no channel are skipped. */
 export function groupByChannel(tasks: OverdueTask[]): Map<string, OverdueTask[]> {
@@ -245,6 +245,10 @@ type SlackResponse = {
  * The webhook answers before the app has posted, so an app-side failure (bad
  * token, channel the app can't reach, failed thread reply) shows in the app's
  * logs (`slack activity`), not as an error here.
+ *
+ * A 429 is retried after `Retry-After` (or 30s): on 2026-10-15 the webhook
+ * answered 429 after ~42 posts in ~70s, and the run stopped there. A 429 means
+ * the call was refused, so retrying can't post twice.
  */
 async function postViaHostedApp(url: string, channelId: string, message: SlackMessage, thread: SlackMessage | null): Promise<void> {
 	const secret = process.env.RELAY_SECRET;
@@ -252,27 +256,48 @@ async function postViaHostedApp(url: string, channelId: string, message: SlackMe
 		throw new TerminalError("RELAY_SECRET is not set; it must match the Slack app's RELAY_SECRET.");
 	}
 
-	const response = await fetch(url, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			token: secret,
-			channel: channelId,
-			text: message.text,
-			blocks_json: JSON.stringify(message.blocks),
-			// Always sent, "" for none, so the trigger's {{data.thread_json}} always resolves.
-			thread_json: thread ? JSON.stringify({ text: thread.text, blocks: thread.blocks }) : "",
-		}),
+	const body = JSON.stringify({
+		token: secret,
+		channel: channelId,
+		text: message.text,
+		blocks_json: JSON.stringify(message.blocks),
+		// Always sent, "" for none, so the trigger's {{data.thread_json}} always resolves.
+		thread_json: thread ? JSON.stringify({ text: thread.text, blocks: thread.blocks }) : "",
 	});
+
+	let response = await postWebhook(url, body);
+	for (let retry = 1; response.status === 429 && retry <= RATE_LIMIT_RETRIES; retry++) {
+		const waitMs = retryAfterMs(response.headers.get("retry-after"));
+		console.warn(
+			`Slack app webhook rate-limited for channel ${channelId}; retry ${retry} of ${RATE_LIMIT_RETRIES} in ${waitMs / 1000}s.`,
+		);
+		await sleep(waitMs);
+		response = await postWebhook(url, body);
+	}
 
 	if (!response.ok) {
 		throw new Error(`Slack app webhook failed for channel ${channelId}: ${response.status}`);
 	}
 
-	const body = (await response.json().catch(() => ({}))) as SlackResponse;
-	if (body.ok === false) {
-		throw new Error(`Slack app webhook rejected the message for channel ${channelId}: ${body.error ?? "unknown error"}`);
+	const result = (await response.json().catch(() => ({}))) as SlackResponse;
+	if (result.ok === false) {
+		throw new Error(`Slack app webhook rejected the message for channel ${channelId}: ${result.error ?? "unknown error"}`);
 	}
+}
+
+const RATE_LIMIT_RETRIES = 5;
+const RATE_LIMIT_FALLBACK_MS = 30_000;
+const RATE_LIMIT_MAX_WAIT_MS = 60_000;
+
+function postWebhook(url: string, body: string): Promise<Response> {
+	return fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body });
+}
+
+/** `Retry-After` in seconds, capped at 60s; 30s when absent or unparseable. */
+function retryAfterMs(header: string | null): number {
+	const seconds = Number(header);
+	if (!header || !Number.isFinite(seconds) || seconds <= 0) return RATE_LIMIT_FALLBACK_MS;
+	return Math.min(seconds * 1000, RATE_LIMIT_MAX_WAIT_MS);
 }
 
 async function chatPostMessage(token: string, payload: Record<string, unknown>): Promise<SlackResponse> {

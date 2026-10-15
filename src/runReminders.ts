@@ -25,6 +25,12 @@ export type RemindersOptions = {
 	stepPrefix?: string;
 	/** Overdue tasks to list before the "X other overdue" line. Defaults to the afternoon's 3. */
 	maxOverdue?: number;
+	/**
+	 * Only post to these channels. For the manual tool, to finish a run that
+	 * stopped partway without re-posting the channels already done. The
+	 * workflows leave it unset (every channel).
+	 */
+	channels?: string[] | null;
 };
 
 export type RemindersSummary = {
@@ -66,7 +72,7 @@ function toTasks(pages: Parameters<typeof toOverdueTask>[0][]): OverdueTask[] {
  * dedupe, so a manual re-run posts again (a workflow retry replays its steps
  * and doesn't). Keep step names and order stable.
  */
-export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix = "", maxOverdue }: RemindersOptions): Promise<RemindersSummary> {
+export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix = "", maxOverdue, channels }: RemindersOptions): Promise<RemindersSummary> {
 	const today = localDateISO(timeZone);
 	console.log(`Sending task reminders for ${today} (${timeZone})${dryRun ? " [DRY RUN]" : ""}.`);
 
@@ -92,7 +98,13 @@ export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix 
 
 	const dueTodayByChannel = groupByChannel(dueToday);
 	const overdueByChannel = groupByChannel(overdue);
-	const channelIds = [...new Set([...dueTodayByChannel.keys(), ...overdueByChannel.keys()])];
+	const channelIds = [...new Set([...dueTodayByChannel.keys(), ...overdueByChannel.keys()])]
+		.filter((channelId) => !channels || channels.includes(channelId));
+	if (channels) {
+		const unknown = channels.filter((channelId) => !dueTodayByChannel.has(channelId) && !overdueByChannel.has(channelId));
+		console.log(`Limited to ${channelIds.length} of the ${channels.length} requested channel(s).`);
+		if (unknown.length > 0) console.warn(`No tasks today for requested channel(s): ${unknown.join(", ")}.`);
+	}
 
 	const notifiedChannels: string[] = [];
 	for (const channelId of channelIds) {
