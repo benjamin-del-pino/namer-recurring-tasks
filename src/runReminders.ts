@@ -10,7 +10,7 @@ import {
 	toOverdueTask,
 } from "./overdueLog.js";
 import type { StepRunner } from "./runOverdueLog.js";
-import { buildChannelPosts, groupByChannel, postToChannel, type Section } from "./slackNotify.js";
+import { buildChannelPosts, groupByChannel, postChannelMessages } from "./slackNotify.js";
 
 export type RemindersOptions = {
 	notion: Client;
@@ -42,16 +42,12 @@ export type RemindersSummary = {
 };
 
 /**
- * Pause before each message after a channel's first. The hosted app's webhook
- * answers before the app posts, so back-to-back calls race and land out of
- * order (seen 2026-10-14: the due-today task posted after both overdue ones,
- * all within ~1s). 2s covers that; a cold start (~1.5-1.8s) is close, so
- * untested as a guarantee.
+ * Pause before each channel after the first, so ~40 channels stay under the
+ * hosted app webhook's rate limit (429 after ~42 calls in ~70s on 2026-10-15).
+ * Message order within a channel is the app's job now: it gets the whole
+ * channel in one call and posts in order.
  */
-const POST_GAP_MS = 2_000;
-
-/** Step-name label per section heading. Keep stable: step names are matched on replay. */
-const HEADING_STEP: Record<Section, string> = { dueToday: "due-today", agent: "agent", overdue: "overdue" };
+const CHANNEL_GAP_MS = 1_000;
 
 /** Tasks already ticked off today shouldn't be nagged about. */
 const NOT_COMPLETE = { property: "Status", status: { does_not_equal: "Complete" } } as const;
@@ -116,25 +112,22 @@ export async function runReminders({ notion, timeZone, dryRun, step, stepPrefix 
 		);
 		console.log(`${posts.length} message(s) for Slack channel ${channelId}.`);
 
-		// One step per message, so a retry re-posts only the ones that failed.
-		for (const [index, post] of posts.entries()) {
-			const thread = post.kind === "task" ? post.thread : null;
-			const name = post.kind === "task"
-				? `${stepPrefix}Notify task ${index + 1} in ${channelId} (${post.task.pageId})`
-				: post.kind === "heading"
-					? `${stepPrefix}Notify ${HEADING_STEP[post.section]} heading in ${channelId}`
-					: `${stepPrefix}Notify overflow in ${channelId}`;
-			if (dryRun) {
+		const messages = posts.map((post) => ({ message: post.message, thread: post.kind === "task" ? post.thread : null }));
+		const name = `${stepPrefix}Notify channel ${channelId}`;
+		if (dryRun) {
+			for (const [index, { message, thread }] of messages.entries()) {
 				console.log(
-					`[DRY RUN] ${name}:\n${post.message.text}${thread ? `\n  thread: ${thread.text}` : ""}\n`
-						+ `Blocks: ${JSON.stringify({ blocks: post.message.blocks })}`,
+					`[DRY RUN] ${name}, message ${index + 1}:\n${message.text}${thread ? `\n  thread: ${thread.text}` : ""}\n`
+						+ `Blocks: ${JSON.stringify({ blocks: message.blocks })}`,
 				);
-				continue;
 			}
+		} else {
+			// One step per channel: the whole channel is one call to the hosted app.
 			// The pause sits inside the step, so a replayed step doesn't wait again.
+			const isFirst = notifiedChannels.length === 0;
 			await step(name, async () => {
-				if (index > 0) await sleep(POST_GAP_MS);
-				await postToChannel(channelId, post.message, thread);
+				if (!isFirst) await sleep(CHANNEL_GAP_MS);
+				await postChannelMessages(channelId, messages);
 			});
 		}
 		notifiedChannels.push(channelId);
