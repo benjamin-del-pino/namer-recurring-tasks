@@ -4,6 +4,7 @@
 #
 #   ./test.sh                    overdue log, dry run: reads Notion, writes nothing, posts nothing
 #   ./test.sh --write            overdue log, real run: creates log rows and posts to Slack
+#   ./test.sh --write C123 C456  overdue log, real run, morning posts only to these channels
 #   ./test.sh reminders          3PM reminder, dry run: reads Notion, posts nothing
 #   ./test.sh reminders --write  3PM reminder, real run: posts to Slack (not deduped)
 #   ./test.sh reminders --write C123 C456
@@ -17,20 +18,19 @@ set -euo pipefail
 
 tool="runLogOverdueTasks"
 label="overdue log"
-extra=""
 if [[ "${1:-}" == "reminders" ]]; then
 	tool="runSendReminders"
 	label="3PM reminder"
 	shift
-	mode="${1:-}"
-	[[ $# -gt 0 ]] && shift
-	if [[ $# -gt 0 ]]; then
-		extra=", \"channels\": [$(printf '"%s",' "$@" | sed 's/,$//')]"
-	else
-		extra=', "channels": null'
-	fi
-	set -- "$mode"
 fi
+mode="${1:-}"
+[[ $# -gt 0 ]] && shift
+if [[ $# -gt 0 ]]; then
+	extra=", \"channels\": [$(printf '"%s",' "$@" | sed 's/,$//')]"
+else
+	extra=', "channels": null'
+fi
+set -- "$mode"
 
 # A long real run can outlast the CLI (504 Gateway Timeout) while it keeps
 # going on the platform: check `ntn workers runs list` for the real outcome.
