@@ -27,6 +27,8 @@ export type OverdueLogOptions = {
 	timeZone: string;
 	dryRun: boolean;
 	step: StepRunner;
+	/** Only post to these channels (the log is always complete). For the manual tool; the workflow leaves it unset. */
+	channels?: string[] | null;
 };
 
 export type OverdueLogSummary = {
@@ -46,7 +48,7 @@ export type OverdueLogSummary = {
  * dedupe the writes. The Slack message is not deduped, so a manual re-run posts
  * again, like the afternoon one.
  */
-export async function runOverdueLog({ notion, timeZone, dryRun, step }: OverdueLogOptions): Promise<OverdueLogSummary> {
+export async function runOverdueLog({ notion, timeZone, dryRun, step, channels }: OverdueLogOptions): Promise<OverdueLogSummary> {
 	const today = localDateISO(timeZone);
 	console.log(`Logging overdue tasks for ${today} (${timeZone})${dryRun ? " [DRY RUN]" : ""}.`);
 
@@ -114,7 +116,15 @@ export async function runOverdueLog({ notion, timeZone, dryRun, step }: OverdueL
 			+ ` ${skipped} skipped as already logged.`,
 	);
 
-	const reminders = await runReminders({ notion, timeZone, dryRun, step, stepPrefix: "Morning: ", maxOverdue: Number.POSITIVE_INFINITY });
+	const reminders = await runReminders({
+		notion,
+		timeZone,
+		dryRun,
+		step,
+		stepPrefix: "Morning: ",
+		maxOverdue: Number.POSITIVE_INFINITY,
+		channels,
+	});
 
 	return {
 		today,

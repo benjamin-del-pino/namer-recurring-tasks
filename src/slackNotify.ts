@@ -238,19 +238,24 @@ type SlackResponse = {
 	ts?: string;
 };
 
+/** One message in a channel's reminder, with an optional reply in its thread. */
+export type OutgoingMessage = { message: SlackMessage; thread: SlackMessage | null };
+
 /**
- * Posts through the Slack-hosted app's webhook. The app posts the message and
- * owns its Complete buttons (instant "Completed by", Notion write handed to the
- * recurring-tasks-slack-actions worker), and posts `thread` as a reply under it.
+ * Sends a whole channel's reminder through the Slack-hosted app's webhook in
+ * one call (`messages_json`); the app posts the messages in order and owns their
+ * Complete buttons (instant "Completed by", Notion write handed to the
+ * recurring-tasks-slack-actions worker) and the thread replies. One call per
+ * channel, not per message: the webhook answered 429 after ~42 calls in ~70s
+ * (2026-10-15), and a Notion workflow run is cut off at about 5 minutes
+ * (2026-10-16), so ~250 single-message calls could not fit in one morning run.
+ *
  * The webhook answers before the app has posted, so an app-side failure (bad
  * token, channel the app can't reach, failed thread reply) shows in the app's
- * logs (`slack activity`), not as an error here.
- *
- * A 429 is retried after `Retry-After` (or 30s): on 2026-10-15 the webhook
- * answered 429 after ~42 posts in ~70s, and the run stopped there. A 429 means
- * the call was refused, so retrying can't post twice.
+ * logs (`slack activity`), not as an error here. A 429 is retried after
+ * `Retry-After` (or 30s); it means the call was refused, so a retry can't post twice.
  */
-async function postViaHostedApp(url: string, channelId: string, message: SlackMessage, thread: SlackMessage | null): Promise<void> {
+async function postViaHostedApp(url: string, channelId: string, messages: OutgoingMessage[]): Promise<void> {
 	const secret = process.env.RELAY_SECRET;
 	if (!secret) {
 		throw new TerminalError("RELAY_SECRET is not set; it must match the Slack app's RELAY_SECRET.");
@@ -259,10 +264,18 @@ async function postViaHostedApp(url: string, channelId: string, message: SlackMe
 	const body = JSON.stringify({
 		token: secret,
 		channel: channelId,
-		text: message.text,
-		blocks_json: JSON.stringify(message.blocks),
-		// Always sent, "" for none, so the trigger's {{data.thread_json}} always resolves.
-		thread_json: thread ? JSON.stringify({ text: thread.text, blocks: thread.blocks }) : "",
+		messages_json: JSON.stringify(
+			messages.map(({ message, thread }) => ({
+				text: message.text,
+				blocks: message.blocks,
+				thread: thread ? { text: thread.text, blocks: thread.blocks } : null,
+			})),
+		),
+		// The older single-message fields. Always sent, "" for none, so every
+		// {{data.*}} in the app's trigger resolves.
+		text: "",
+		blocks_json: "",
+		thread_json: "",
 	});
 
 	let response = await postWebhook(url, body);
@@ -281,7 +294,7 @@ async function postViaHostedApp(url: string, channelId: string, message: SlackMe
 
 	const result = (await response.json().catch(() => ({}))) as SlackResponse;
 	if (result.ok === false) {
-		throw new Error(`Slack app webhook rejected the message for channel ${channelId}: ${result.error ?? "unknown error"}`);
+		throw new Error(`Slack app webhook rejected the messages for channel ${channelId}: ${result.error ?? "unknown error"}`);
 	}
 }
 
@@ -317,17 +330,17 @@ async function chatPostMessage(token: string, payload: Record<string, unknown>):
 }
 
 /**
- * Posts a Block Kit message to a Slack channel, plus `thread` as a reply under
- * it when given. With `SLACK_POST_WEBHOOK_URL` set it goes through the hosted
- * Slack app; otherwise it falls back to `chat.postMessage` with `SLACK_API_KEY`
- * (the older Notifier/Tester app). On the fallback a failed thread reply is
- * logged, not thrown: the task message went out, and a retry would post it twice.
+ * Posts a channel's messages in order, each with its thread reply when given.
+ * With `SLACK_POST_WEBHOOK_URL` set it is one call to the hosted Slack app;
+ * otherwise it falls back to `chat.postMessage` with `SLACK_API_KEY` (the older
+ * Notifier/Tester app), one message at a time. On the fallback a failed thread
+ * reply is logged, not thrown: the task message went out, and a retry would post it twice.
  */
-export async function postToChannel(channelId: string, message: SlackMessage, thread: SlackMessage | null = null): Promise<void> {
+export async function postChannelMessages(channelId: string, messages: OutgoingMessage[]): Promise<void> {
 	const hostedAppUrl = process.env.SLACK_POST_WEBHOOK_URL;
 	if (hostedAppUrl) {
-		console.log(`Posting to ${channelId} via the hosted Slack app webhook.`);
-		return postViaHostedApp(hostedAppUrl, channelId, message, thread);
+		console.log(`Posting ${messages.length} message(s) to ${channelId} via the hosted Slack app webhook.`);
+		return postViaHostedApp(hostedAppUrl, channelId, messages);
 	}
 	console.log(`Posting to ${channelId} via chat.postMessage (SLACK_POST_WEBHOOK_URL is empty or unset in this runtime).`);
 
@@ -336,16 +349,18 @@ export async function postToChannel(channelId: string, message: SlackMessage, th
 		throw new TerminalError("SLACK_API_KEY is not set; add it to .env (and push it to the deployed worker).");
 	}
 
-	const body = await chatPostMessage(token, { channel: channelId, text: message.text, blocks: message.blocks });
-	if (!body.ok) {
-		throw new Error(`Slack rejected the message for channel ${channelId}: ${body.error ?? "unknown error"}`);
-	}
-	if (!thread) return;
+	for (const { message, thread } of messages) {
+		const body = await chatPostMessage(token, { channel: channelId, text: message.text, blocks: message.blocks });
+		if (!body.ok) {
+			throw new Error(`Slack rejected the message for channel ${channelId}: ${body.error ?? "unknown error"}`);
+		}
+		if (!thread) continue;
 
-	try {
-		const reply = await chatPostMessage(token, { channel: channelId, thread_ts: body.ts, text: thread.text, blocks: thread.blocks });
-		if (!reply.ok) console.warn(`Thread reply failed in ${channelId} (ts ${body.ts}): ${reply.error ?? "unknown error"}`);
-	} catch (error) {
-		console.warn(`Thread reply failed in ${channelId} (ts ${body.ts}): ${String(error)}`);
+		try {
+			const reply = await chatPostMessage(token, { channel: channelId, thread_ts: body.ts, text: thread.text, blocks: thread.blocks });
+			if (!reply.ok) console.warn(`Thread reply failed in ${channelId} (ts ${body.ts}): ${reply.error ?? "unknown error"}`);
+		} catch (error) {
+			console.warn(`Thread reply failed in ${channelId} (ts ${body.ts}): ${String(error)}`);
+		}
 	}
 }
